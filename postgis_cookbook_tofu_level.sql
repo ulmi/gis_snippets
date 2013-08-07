@@ -92,5 +92,5 @@ insert into polygon (osm_id, highway, name, ref, geom)
 	where st_intersects (r.geom, p.geom) and st_length(st_intersection(r.geom, p.geom)) > 6
 
 
--- só falta o código para o edificios, join simples ehehehehehehe
+-- só falta o código para o edificios, join simples - espero - :|
 

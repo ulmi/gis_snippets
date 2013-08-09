@@ -55,33 +55,60 @@ UPDATE planet_osm_line SET etrs_tm06 = transform(way, 3763);
 
 -- ## OSM + POSTGIS ##
 
+--kind of workflow to work with the osm data for the Rio Maior municipality
+
 -- criar uma tabela para isolar as estradas
+drop table roads;
 create table roads as
-	select osm_id, highway, name, ref, way as geom
+	select osm_id, highway, surface, name, ref, way as geom
 	from planet_osm_line
-	where highway is not null or ref is not null
+	where highway is not null or ref is not null or railway is not null
 
 -- criar tabela de merge
 -- fazer merge às features que se intersectam e tem o mesmo nome
+
 create table roads_merge as
 (
-select r1.osm_id, r1.highway, r1.name, r1.ref, st_union(r1.geom, r2.geom) as geom from planet_osm_line r1, planet_osm_line r2
-where r1.osm_id <> r2.osm_id and st_intersects (st_buffer(r1.geom, 10), st_buffer(r2.geom, 10)) and r1.name = r2.name)
+drop table roads_merge;
+create table roads_merge as
+select row_number () over () as id, r1.highway, r1.surface, r1.name, r1.ref, st_linemerge(st_collect(r1.geom)) as geom
+from roads r1, roads r2
+where st_intersects (st_buffer(r1.geom, 100), st_buffer(r2.geom, 100))
+and r1.name = r2.name and r1.ref is null
+group by r1.highway, r1.surface, r1.name, r1.ref
 
--- fazer o mesmo para as linhas de referencia "r1.ref = r2.ref" and name is not null
--- para que não se misturem as que tem dados no nome
-insert into roads_merge (osm_id, highway, name, ref, geom)
-	select r1.osm_id, r1.highway, r1.name, r1.ref, st_union(r1.geom, r2.geom)
+-- last condition is to avoid duplicated lines on this table
+
+-- fazer a mesma coisa para as estradas que tem só ref onde ele não é null mas utilizar o insert to
+insert into roads_merge (highway, surface, name, ref, geom)
+	select r1.highway, r1.surface, r1.name, r1.ref, st_linemerge(st_collect(r1.geom)) as geom
 	from roads r1, roads r2
-	where r1.osm_id <> r2.osm_id and st_intersects (st_buffer(r1.geom, 10), st_buffer(r2.geom, 10))
-	and r1.ref = r2.ref and r1.name is not null
+	where st_intersects (st_buffer(r1.geom, 100), st_buffer(r2.geom, 100)) and r1.ref = r2.ref and r1.name is null
+	group by r1.highway, r1.surface, r1.name, r1.ref
+
+insert into roads_merge (highway, surface, name, ref, geom)
+	select r1.highway, r1.surface, r1.name, r1.ref, r1.geom
+	from roads r1, roads r2
+	where st_disjoint and r1.name = r2.name and r1.name is not null
+	group by r1.highway, r1.surface, r1.name, r1.ref
+
+
+
 
 
 -- inserir as single feature da BD
-insert into roads_merge (osm_id, highway, name, ref, geom)
-	select r1.osm_id, r1.highway, r1.name, r1.way as geom
-	from roads r1, roads r2
-	where r1.osm_id <> r2.osm_id and st_disjoint (r1.way, r2.way) and r1.name <> r2.name
+select r1.highway, r1.surface, r1.name, r1.ref, r1.geom
+	from roads r1, roads_merge r2
+	where st_disjoint (r1.geom, r2.geom) and r1.name = r2.name and r1.name is not null
+	group by r1.highway, r1.surface, r1.name, r1.ref, r1.geom
+
+
+
+
+--add column with the for the street code
+alter table public.roads_merge
+  add column cod_rua bigint;
+
 
 
 -- comprimento da intersecção com inserção de dados, espero eu :\
